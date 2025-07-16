@@ -369,11 +369,11 @@ jobs:
         else
           git commit -m "🤖 Automated: Build and update Termux APT repository
 
-- Updated repository structure
-- Generated package metadata
-- Total packages: $(find pool -name '*.deb' | wc -l)
-- Build timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        - Updated repository structure
+        - Generated package metadata
+        - Total packages: $(find pool -name '*.deb' | wc -l)
+        - Build timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
-[skip ci]"
+        [skip ci]"
           git push
         fi
