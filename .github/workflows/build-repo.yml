@@ -240,66 +240,61 @@ jobs:
     - name: Generate package metadata
       run: |
         echo "📊 Generating package metadata..."
-        
-        # Create packages.json for API access
-        cat > packages.json << 'EOF'
-{
-  "repository": "Kelexine Labs",
-  "url": "https://kelexine.github.io/kelexine-labs",
-  "sections": {
-    "main": [],
-    "experimental": [],
-    "tools": []
-  },
-  "total_packages": 0,
-  "last_updated": ""
-}
-EOF
-        
-        # Extract package information
-        TOTAL_PACKAGES=0
-        
-        for section in main experimental tools; do
-          if [ -d "pool/$section" ]; then
-            for deb in pool/$section/*.deb; do
-              [ -f "$deb" ] || continue
-              
-              PACKAGE_NAME=$(dpkg-deb --field "$deb" Package)
-              VERSION=$(dpkg-deb --field "$deb" Version)
-              ARCH=$(dpkg-deb --field "$deb" Architecture)
-              DESCRIPTION=$(dpkg-deb --field "$deb" Description)
-              SIZE=$(stat -c%s "$deb")
-              
-              # Add to packages.json using jq-like manipulation
-              python3 -c "
+
+        # Create a Python script to generate the metadata
+        cat > generate_metadata.py << 'EOF'
 import json
+import os
 import sys
+from datetime import datetime, timezone
 
-with open('packages.json', 'r') as f:
-    data = json.load(f)
+sections = ["main", "experimental", "tools"]
+packages_data = {
+    "repository": "Kelexine Labs",
+    "url": "https://kelexine.github.io/kelexine-labs",
+    "sections": {s: [] for s in sections},
+    "total_packages": 0,
+    "last_updated": ""
+}
 
-data['sections']['$section'].append({
-    'name': '$PACKAGE_NAME',
-    'version': '$VERSION',
-    'architecture': '$ARCH',
-    'description': '$DESCRIPTION',
-    'size': $SIZE,
-    'filename': '$(basename "$deb")'
-})
+total_packages = 0
+for section in sections:
+    section_path = os.path.join("pool", section)
+    if not os.path.isdir(section_path):
+        continue
 
-data['total_packages'] += 1
-data['last_updated'] = '$(date -u +"%Y-%m-%dT%H:%M:%SZ")'
+    for filename in os.listdir(section_path):
+        if not filename.endswith(".deb"):
+            continue
 
-with open('packages.json', 'w') as f:
-    json.dump(data, f, indent=2)
-"
-              
-              TOTAL_PACKAGES=$((TOTAL_PACKAGES + 1))
-            done
-          fi
-        done
-        
-        echo "Generated metadata for $TOTAL_PACKAGES packages"
+        deb_path = os.path.join(section_path, filename)
+        package_name = os.popen(f"dpkg-deb --field {deb_path} Package").read().strip()
+        version = os.popen(f"dpkg-deb --field {deb_path} Version").read().strip()
+        arch = os.popen(f"dpkg-deb --field {deb_path} Architecture").read().strip()
+        description = os.popen(f"dpkg-deb --field {deb_path} Description").read().strip()
+        size = os.path.getsize(deb_path)
+
+        packages_data["sections"][section].append({
+            "name": package_name,
+            "version": version,
+            "architecture": arch,
+            "description": description,
+            "size": size,
+            "filename": filename
+        })
+        total_packages += 1
+
+packages_data["total_packages"] = total_packages
+packages_data["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+with open("packages.json", "w") as f:
+    json.dump(packages_data, f, indent=2)
+
+print(f"Generated metadata for {total_packages} packages")
+EOF
+
+        # Execute the Python script
+        python3 generate_metadata.py
         
     - name: Generate release notes
       run: |
