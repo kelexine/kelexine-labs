@@ -21,3 +21,4 @@ Thumbs.db
 # --- Private Scripts ---
 build-package.sh
 setup-repo.sh
+context.md
