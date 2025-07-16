@@ -302,49 +302,7 @@ EOF
       run: |
         echo "📝 Generating release notes..."
 
-        # Create a shell script to generate the release notes
-        cat > generate_release_notes.sh << 'EOF'
-#!/bin/bash
-set -e
-
-# Get changed packages
-CHANGED_PACKAGES=""
-if [ "${{ github.event_name }}" = "push" ]; then
-  CHANGED_PACKAGES=$(git diff --name-only HEAD~1 HEAD | grep "^pool/.*\\.deb$" || true)
-fi
-
-cat > RELEASE_NOTES.md << EOM
-# Kelexine Labs Repository Update
-
-**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-**Commit:** $GITHUB_SHA
-
-## Changes
-
-EOM
-
-if [ -n "$CHANGED_PACKAGES" ]; then
-  echo "### Updated Packages" >> RELEASE_NOTES.md
-  echo "" >> RELEASE_NOTES.md
-  for pkg in $CHANGED_PACKAGES; do
-    PKG_NAME=$(dpkg-deb --field "$pkg" Package)
-    PKG_VERSION=$(dpkg-deb --field "$pkg" Version)
-    echo "- **$PKG_NAME** v$PKG_VERSION" >> RELEASE_NOTES.md
-  done
-else
-  echo "### Repository Maintenance" >> RELEASE_NOTES.md
-  echo "" >> RELEASE_NOTES.md
-  echo "- Repository structure updates" >> RELEASE_NOTES.md
-fi
-
-echo "" >> RELEASE_NOTES.md
-echo "## Repository Stats" >> RELEASE_NOTES.md
-echo "" >> RELEASE_NOTES.md
-echo "- Total packages: $(find pool -name '*.deb' | wc -l)" >> RELEASE_NOTES.md
-echo "- Repository size: $(du -sh dists/ | cut -f1)" >> RELEASE_NOTES.md
-EOM
-
-EOF
+        printf "%s" "#!/bin/bash\nset -e\n\n# Get changed packages\nCHANGED_FILES=\"\"\nif [ \"${{ github.event_name }}\" = \"push\" ]; then\n  CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep \"^pool/.*\\.deb$\" || true)\nfi\n\ncat > RELEASE_NOTES.md << 'EOF_MARKDOWN'\n# Kelexine Labs Repository Update\n\n**Date:** $(date -u +\"%Y-%m-%d %H:%M:%S UTC\")\n**Commit:** $GITHUB_SHA\n\n## Changes\n\nEOF_MARKDOWN\n\nif [ -n \"$CHANGED_FILES\" ]; then\n  echo \"### Updated Packages\" >> RELEASE_NOTES.md\n  echo \"\" >> RELEASE_NOTES.md\n  for pkg_file in $CHANGED_FILES; do\n    PKG_NAME=$(dpkg-deb --field \"$pkg_file\" Package)\n    PKG_VERSION=$(dpkg-deb --field \"$pkg_file\" Version)\n    echo \"- **$PKG_NAME** v$PKG_VERSION\" >> RELEASE_NOTES.md\n  done\nelse\n  echo \"### Repository Maintenance\" >> RELEASE_NOTES.md\n  echo \"\" >> RELEASE_NOTES.md\n  echo \"- Repository structure updates\" >> RELEASE_NOTES.md\nfi\n\necho \"\" >> RELEASE_NOTES.md\necho \"## Repository Stats\" >> RELEASE_NOTES.md\necho \"\" >> RELEASE_NOTES.md\necho \"- Total packages: $(find pool -name '*.deb' | wc -l)\" >> RELEASE_NOTES.md\necho \"- Repository size: $(du -sh dists/ | cut -f1)\" >> RELEASE_NOTES.md\n" > generate_release_notes.sh
 
         # Make the script executable and run it
         chmod +x generate_release_notes.sh
