@@ -1,0 +1,71 @@
+name: Build Termux APT Repository
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'pool/**'
+      - '.github/workflows/build-repo.yml'
+  workflow_dispatch:
+
+jobs:
+  build-repository:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install termux-apt-repo
+      run: npm install -g termux-apt-repo
+      
+    - name: Verify pool directory
+      run: |
+        if [ ! -d "pool" ]; then
+          echo "Creating pool directory..."
+          mkdir -p pool
+        fi
+        echo "Pool contents:"
+        ls -la pool/
+        
+    - name: Clean previous builds
+      run: |
+        rm -rf dists/
+        rm -f Packages* Release* InRelease*
+        
+    - name: Build APT repository
+      run: |
+        termux-apt-repo \
+          -r . \
+          -c "Kelexine Labs" \
+          -d "Custom Termux packages by Kelexine - Innovation in mobile development" \
+          -v \
+          --gpg-key "${{ secrets.GPG_PRIVATE_KEY }}" \
+          --gpg-passphrase "${{ secrets.GPG_PASSPHRASE }}"
+          
+    - name: Verify repository structure
+      run: |
+        echo "Repository structure after build:"
+        find dists/ -type f -name "*.gz" -o -name "Packages" -o -name "Release" | head -20
+        
+    - name: Configure Git
+      run: |
+        git config --local user.email "frankiekelechi@gmail.com"
+        git config --local user.name "kelexine"
+        
+    - name: Commit and push changes
+      run: |
+        git add dists/ Packages* Release* InRelease* || true
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "🤖 Automated: Build and update Termux APT repository [$(date '+%Y-%m-%d %H:%M:%S')]"
+          git push
+        fi

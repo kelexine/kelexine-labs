@@ -1,0 +1,18 @@
+# Build artifacts
+build-*/
+*.deb.tmp
+*.buildinfo
+*.changes
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
