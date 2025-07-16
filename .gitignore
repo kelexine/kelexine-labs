@@ -3,6 +3,7 @@ build-*/
 *.deb.tmp
 *.buildinfo
 *.changes
+*.bak
 
 # System files
 .DS_Store
