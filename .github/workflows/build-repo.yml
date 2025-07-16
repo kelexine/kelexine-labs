@@ -7,10 +7,138 @@ on:
       - 'pool/**'
       - '.github/workflows/build-repo.yml'
   workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths: 
+      - 'pool/**'
+
+env:
+  DEBIAN_FRONTEND: noninteractive
 
 jobs:
+  validate-packages:
+    runs-on: ubuntu-latest
+    outputs:
+      packages-changed: ${{ steps.changes.outputs.packages }}
+      
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Install validation tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y dpkg-dev file binutils lintian
+        
+    - name: Detect changed packages
+      id: changes
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep "^pool/.*\.deb$" || true)
+        else
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep "^pool/.*\.deb$" || true)
+        fi
+        
+        if [ -n "$CHANGED_FILES" ]; then
+          echo "packages=true" >> $GITHUB_OUTPUT
+          echo "Changed packages: $CHANGED_FILES"
+        else
+          echo "packages=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Validate package structure
+      if: steps.changes.outputs.packages == 'true'
+      run: |
+        echo "🔍 Validating package structure..."
+        for deb in pool/*.deb; do
+          [ -f "$deb" ] || continue
+          
+          echo "Validating: $deb"
+          
+          # Check if it's a valid .deb file
+          if ! dpkg-deb --info "$deb" >/dev/null 2>&1; then
+            echo "❌ Invalid .deb file: $deb"
+            exit 1
+          fi
+          
+          # Extract package info
+          PACKAGE_NAME=$(dpkg-deb --field "$deb" Package)
+          VERSION=$(dpkg-deb --field "$deb" Version)
+          ARCH=$(dpkg-deb --field "$deb" Architecture)
+          
+          # Validate naming convention
+          EXPECTED_NAME="${PACKAGE_NAME}_${VERSION}_${ARCH}.deb"
+          ACTUAL_NAME=$(basename "$deb")
+          
+          if [ "$ACTUAL_NAME" != "$EXPECTED_NAME" ]; then
+            echo "❌ Package naming mismatch: $ACTUAL_NAME should be $EXPECTED_NAME"
+            exit 1
+          fi
+          
+          # Check for required fields
+          if [ -z "$PACKAGE_NAME" ] || [ -z "$VERSION" ] || [ -z "$ARCH" ]; then
+            echo "❌ Missing required fields in $deb"
+            exit 1
+          fi
+          
+          # Check file permissions and content
+          echo "📂 Package contents:"
+          dpkg-deb --contents "$deb" | head -10
+          
+          # Run lintian for additional checks
+          echo "🔍 Running lintian checks..."
+          lintian --no-tag-display-limit "$deb" || true
+          
+          echo "✅ Package $deb validated successfully"
+        done
+
+  test-packages:
+    runs-on: ubuntu-latest
+    needs: validate-packages
+    if: needs.validate-packages.outputs.packages-changed == 'true'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Termux environment simulation
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y qemu-user-static
+        
+    - name: Test package installation simulation
+      run: |
+        echo "🧪 Testing package installation..."
+        for deb in pool/*.deb; do
+          [ -f "$deb" ] || continue
+          
+          # Extract to temporary directory
+          TEMP_DIR=$(mktemp -d)
+          dpkg-deb --extract "$deb" "$TEMP_DIR"
+          
+          # Check if binaries exist and are executable
+          if [ -d "$TEMP_DIR/data/data/com.termux/files/usr/bin" ]; then
+            find "$TEMP_DIR/data/data/com.termux/files/usr/bin" -type f -executable | while read -r binary; do
+              echo "Found executable: $binary"
+              file "$binary" | grep -E "(ELF|script)" || echo "Warning: Unusual binary type"
+            done
+          fi
+          
+          # Check dependencies
+          DEPENDS=$(dpkg-deb --field "$deb" Depends)
+          if [ -n "$DEPENDS" ]; then
+            echo "Dependencies for $(basename "$deb"): $DEPENDS"
+          fi
+          
+          rm -rf "$TEMP_DIR"
+        done
+
   build-repository:
     runs-on: ubuntu-latest
+    needs: [validate-packages, test-packages]
+    if: always() && (needs.validate-packages.result == 'success' || needs.validate-packages.result == 'skipped')
     
     steps:
     - name: Checkout repository
@@ -23,49 +151,232 @@ jobs:
       with:
         node-version: '18'
         
-    - name: Install termux-apt-repo
-      run: npm install -g termux-apt-repo
-      
-    - name: Verify pool directory
+    - name: Install build tools
       run: |
-        if [ ! -d "pool" ]; then
-          echo "Creating pool directory..."
-          mkdir -p pool
-        fi
-        echo "Pool contents:"
-        ls -la pool/
+        npm install -g termux-apt-repo
+        sudo apt-get update
+        sudo apt-get install -y gnupg2
+        
+    - name: Setup GPG signing
+      if: env.GPG_PRIVATE_KEY != ''
+      env:
+        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      run: |
+        echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+        echo "GPG keys imported successfully"
+        
+    - name: Organize packages by section
+      run: |
+        echo "📦 Organizing packages..."
+        mkdir -p pool/main pool/experimental pool/tools
+        
+        # Move packages to appropriate sections based on naming or metadata
+        for deb in pool/*.deb; do
+          [ -f "$deb" ] || continue
+          
+          PACKAGE_NAME=$(dpkg-deb --field "$deb" Package)
+          VERSION=$(dpkg-deb --field "$deb" Version)
+          SECTION=$(dpkg-deb --field "$deb" Section)
+          
+          # Determine section based on package name or metadata
+          if [[ "$PACKAGE_NAME" =~ ^experimental- ]] || [[ "$VERSION" =~ (alpha|beta|rc) ]]; then
+            mv "$deb" pool/experimental/
+            echo "Moved $deb to experimental section"
+          elif [[ "$SECTION" == "devel" ]] || [[ "$PACKAGE_NAME" =~ -dev$ ]]; then
+            mv "$deb" pool/tools/
+            echo "Moved $deb to tools section"
+          else
+            mv "$deb" pool/main/
+            echo "Moved $deb to main section"
+          fi
+        done
         
     - name: Clean previous builds
       run: |
         rm -rf dists/
         rm -f Packages* Release* InRelease*
         
-    - name: Build APT repository
+    - name: Build multi-section repository
       run: |
-        termux-apt-repo \
-          -r . \
-          -c "Kelexine Labs" \
-          -d "Custom Termux packages by Kelexine - Innovation in mobile development" \
-          -v \
-          --gpg-key "${{ secrets.GPG_PRIVATE_KEY }}" \
-          --gpg-passphrase "${{ secrets.GPG_PASSPHRASE }}"
-          
+        echo "🏗️ Building repository with multiple sections..."
+        
+        # Build main section
+        if [ -n "$(find pool/main -name '*.deb' 2>/dev/null)" ]; then
+          echo "Building main section..."
+          termux-apt-repo \
+            -r . \
+            -c "Kelexine Labs" \
+            -d "Custom Termux packages by Kelexine - Innovation in mobile development" \
+            -s main \
+            --gpg-key "${{ secrets.GPG_PRIVATE_KEY }}" \
+            --gpg-passphrase "${{ secrets.GPG_PASSPHRASE }}"
+        fi
+        
+        # Build experimental section
+        if [ -n "$(find pool/experimental -name '*.deb' 2>/dev/null)" ]; then
+          echo "Building experimental section..."
+          termux-apt-repo \
+            -r . \
+            -c "Kelexine Labs" \
+            -d "Experimental packages - use with caution" \
+            -s experimental \
+            --gpg-key "${{ secrets.GPG_PRIVATE_KEY }}" \
+            --gpg-passphrase "${{ secrets.GPG_PASSPHRASE }}"
+        fi
+        
+        # Build tools section
+        if [ -n "$(find pool/tools -name '*.deb' 2>/dev/null)" ]; then
+          echo "Building tools section..."
+          termux-apt-repo \
+            -r . \
+            -c "Kelexine Labs" \
+            -d "Development tools and utilities" \
+            -s tools \
+            --gpg-key "${{ secrets.GPG_PRIVATE_KEY }}" \
+            --gpg-passphrase "${{ secrets.GPG_PASSPHRASE }}"
+        fi
+        
+    - name: Generate package metadata
+      run: |
+        echo "📊 Generating package metadata..."
+        
+        # Create packages.json for API access
+        cat > packages.json << 'EOF'
+{
+  "repository": "Kelexine Labs",
+  "url": "https://kelexine.github.io/kelexine-labs",
+  "sections": {
+    "main": [],
+    "experimental": [],
+    "tools": []
+  },
+  "total_packages": 0,
+  "last_updated": ""
+}
+EOF
+        
+        # Extract package information
+        TOTAL_PACKAGES=0
+        
+        for section in main experimental tools; do
+          if [ -d "pool/$section" ]; then
+            for deb in pool/$section/*.deb; do
+              [ -f "$deb" ] || continue
+              
+              PACKAGE_NAME=$(dpkg-deb --field "$deb" Package)
+              VERSION=$(dpkg-deb --field "$deb" Version)
+              ARCH=$(dpkg-deb --field "$deb" Architecture)
+              DESCRIPTION=$(dpkg-deb --field "$deb" Description)
+              SIZE=$(stat -c%s "$deb")
+              
+              # Add to packages.json using jq-like manipulation
+              python3 -c "
+import json
+import sys
+
+with open('packages.json', 'r') as f:
+    data = json.load(f)
+
+data['sections']['$section'].append({
+    'name': '$PACKAGE_NAME',
+    'version': '$VERSION',
+    'architecture': '$ARCH',
+    'description': '$DESCRIPTION',
+    'size': $SIZE,
+    'filename': '$(basename "$deb")'
+})
+
+data['total_packages'] += 1
+data['last_updated'] = '$(date -u +"%Y-%m-%dT%H:%M:%SZ")'
+
+with open('packages.json', 'w') as f:
+    json.dump(data, f, indent=2)
+"
+              
+              TOTAL_PACKAGES=$((TOTAL_PACKAGES + 1))
+            done
+          fi
+        done
+        
+        echo "Generated metadata for $TOTAL_PACKAGES packages"
+        
+    - name: Generate release notes
+      run: |
+        echo "📝 Generating release notes..."
+        
+        # Get changed packages
+        CHANGED_PACKAGES=""
+        if [ "${{ github.event_name }}" = "push" ]; then
+          CHANGED_PACKAGES=$(git diff --name-only HEAD~1 HEAD | grep "^pool/.*\.deb$" || true)
+        fi
+        
+        cat > RELEASE_NOTES.md << EOF
+# Kelexine Labs Repository Update
+
+**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+**Commit:** ${{ github.sha }}
+
+## Changes
+
+EOF
+        
+        if [ -n "$CHANGED_PACKAGES" ]; then
+          echo "### Updated Packages" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          for pkg in $CHANGED_PACKAGES; do
+            PKG_NAME=$(dpkg-deb --field "$pkg" Package)
+            PKG_VERSION=$(dpkg-deb --field "$pkg" Version)
+            echo "- **$PKG_NAME** v$PKG_VERSION" >> RELEASE_NOTES.md
+          done
+        else
+          echo "### Repository Maintenance" >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "- Repository structure updates" >> RELEASE_NOTES.md
+        fi
+        
+        echo "" >> RELEASE_NOTES.md
+        echo "## Repository Stats" >> RELEASE_NOTES.md
+        echo "" >> RELEASE_NOTES.md
+        echo "- Total packages: $(find pool -name '*.deb' | wc -l)" >> RELEASE_NOTES.md
+        echo "- Repository size: $(du -sh dists/ | cut -f1)" >> RELEASE_NOTES.md
+        
     - name: Verify repository structure
       run: |
-        echo "Repository structure after build:"
+        echo "🔍 Verifying repository structure..."
         find dists/ -type f -name "*.gz" -o -name "Packages" -o -name "Release" | head -20
+        
+        # Test repository accessibility
+        if [ -f "dists/kelexine/main/binary-aarch64/Packages" ]; then
+          echo "✅ Main section built successfully"
+        fi
+        
+        if [ -f "dists/kelexine/experimental/binary-aarch64/Packages" ]; then
+          echo "✅ Experimental section built successfully"
+        fi
+        
+        if [ -f "dists/kelexine/tools/binary-aarch64/Packages" ]; then
+          echo "✅ Tools section built successfully"
+        fi
         
     - name: Configure Git
       run: |
-        git config --local user.email "frankiekelechi@gmail.com"
-        git config --local user.name "kelexine"
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action Bot"
         
     - name: Commit and push changes
       run: |
-        git add dists/ Packages* Release* InRelease* || true
+        git add dists/ pool/ packages.json RELEASE_NOTES.md Packages* Release* InRelease* || true
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "🤖 Automated: Build and update Termux APT repository [$(date '+%Y-%m-%d %H:%M:%S')]"
+          git commit -m "🤖 Automated: Build and update Termux APT repository
+
+- Updated repository structure
+- Generated package metadata
+- Total packages: $(find pool -name '*.deb' | wc -l)
+- Build timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+[skip ci]"
           git push
         fi
