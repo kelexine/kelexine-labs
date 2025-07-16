@@ -244,60 +244,58 @@ jobs:
     - name: Generate package metadata
       run: |
         echo "📊 Generating package metadata..."
-
-        # Create a Python script to generate the metadata
+        
         cat > generate_metadata.py << 'EOF'
-import json
-import os
-import sys
-from datetime import datetime, timezone
-
-sections = ["main", "experimental", "tools"]
-packages_data = {
-    "repository": "Kelexine Labs",
-    "url": "https://kelexine.github.io/kelexine-labs",
-    "sections": {s: [] for s in sections},
-    "total_packages": 0,
-    "last_updated": ""
-}
-
-total_packages = 0
-for section in sections:
-    section_path = os.path.join("pool", section)
-    if not os.path.isdir(section_path):
-        continue
-
-    for filename in os.listdir(section_path):
-        if not filename.endswith(".deb"):
-            continue
-
-        deb_path = os.path.join(section_path, filename)
-        package_name = os.popen(f"dpkg-deb --field {deb_path} Package").read().strip()
-        version = os.popen(f"dpkg-deb --field {deb_path} Version").read().strip()
-        arch = os.popen(f"dpkg-deb --field {deb_path} Architecture").read().strip()
-        description = os.popen(f"dpkg-deb --field {deb_path} Description").read().strip()
-        size = os.path.getsize(deb_path)
-
-        packages_data["sections"][section].append({
-            "name": package_name,
-            "version": version,
-            "architecture": arch,
-            "description": description,
-            "size": size,
-            "filename": filename
-        })
-        total_packages += 1
-
-packages_data["total_packages"] = total_packages
-packages_data["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-with open("packages.json", "w") as f:
-    json.dump(packages_data, f, indent=2)
-
-print(f"Generated metadata for {total_packages} packages")
-EOF
-
-        # Execute the Python script
+        import json
+        import os
+        import sys
+        from datetime import datetime, timezone
+        
+        sections = ["main", "experimental", "tools"]
+        packages_data = {
+            "repository": "Kelexine Labs",
+            "url": "https://kelexine.github.io/kelexine-labs",
+            "sections": {s: [] for s in sections},
+            "total_packages": 0,
+            "last_updated": ""
+        }
+        
+        total_packages = 0
+        for section in sections:
+            section_path = os.path.join("pool", section)
+            if not os.path.isdir(section_path):
+                continue
+        
+            for filename in os.listdir(section_path):
+                if not filename.endswith(".deb"):
+                    continue
+        
+                deb_path = os.path.join(section_path, filename)
+                package_name = os.popen(f"dpkg-deb --field {deb_path} Package").read().strip()
+                version = os.popen(f"dpkg-deb --field {deb_path} Version").read().strip()
+                arch = os.popen(f"dpkg-deb --field {deb_path} Architecture").read().strip()
+                description = os.popen(f"dpkg-deb --field {deb_path} Description").read().strip()
+                size = os.path.getsize(deb_path)
+        
+                packages_data["sections"][section].append({
+                    "name": package_name,
+                    "version": version,
+                    "architecture": arch,
+                    "description": description,
+                    "size": size,
+                    "filename": filename
+                })
+                total_packages += 1
+        
+        packages_data["total_packages"] = total_packages
+        packages_data["last_updated"] = datetime.now(timezone.utc).isoformat()
+        
+        with open("packages.json", "w") as f:
+            json.dump(packages_data, f, indent=2)
+        
+        print(f"Generated metadata for {total_packages} packages")
+        EOF
+        
         python3 generate_metadata.py
         
     - name: Generate release notes
@@ -310,15 +308,15 @@ EOF
           CHANGED_PACKAGES=$(git diff --name-only HEAD~1 HEAD | grep "^pool/.*\.deb$" || true)
         fi
         
-        cat > RELEASE_NOTES.md << EOF
-# Kelexine Labs Repository Update
-
-**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-**Commit:** ${{ github.sha }}
-
-## Changes
-
-EOF
+        cat > RELEASE_NOTES.md << 'EOF'
+        # Kelexine Labs Repository Update
+        
+        **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        **Commit:** ${{ github.sha }}
+        
+        ## Changes
+        
+        EOF
         
         if [ -n "$CHANGED_PACKAGES" ]; then
           echo "### Updated Packages" >> RELEASE_NOTES.md
