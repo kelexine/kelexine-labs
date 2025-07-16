@@ -16,3 +16,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# --- Private Scripts ---
+build-package.sh
+setup-repo.sh
