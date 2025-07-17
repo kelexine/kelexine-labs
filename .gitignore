@@ -1,4 +1,5 @@
 # Build artifacts
+packages
 build-*/
 *.deb.tmp
 *.buildinfo
@@ -22,3 +23,5 @@ Thumbs.db
 build-package.sh
 setup-repo.sh
 context.md
+GEMINI.md
+CLAUDE.md
