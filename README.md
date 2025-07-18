@@ -25,6 +25,7 @@ Here is a list of packages currently available in the repository:
 | Package         | Version | Description                                                                 |
 |-----------------|---------|-----------------------------------------------------------------------------|
 | `example-tool`  | 1.0.0   | A demonstration package to verify repository functionality.                 |
+| `kl-notes`      | 1.0.0   | A simple command-line note-taking utility for Termux.       |
 | `termux-info`   | 1.0.0   | A powerful tool to display a comprehensive summary of your Termux environment. |
 
 ### Example Usage
