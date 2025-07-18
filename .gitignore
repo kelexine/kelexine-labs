@@ -1,6 +1,6 @@
 # Build artifacts
-packages
-build-*/
+packages/
+build/
 *.deb.tmp
 *.buildinfo
 *.changes
